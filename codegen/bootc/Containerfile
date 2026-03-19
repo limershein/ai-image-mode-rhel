@@ -14,39 +14,30 @@ RUN set -eu; mkdir -p /usr/ssh && \
     echo ${SSHPUBKEY} > /usr/ssh/root.keys && chmod 0600 /usr/ssh/root.keys
 
 ARG RECIPE=codegen
-ARG MODEL_IMAGE=quay.io/ai-lab/mistral-7b-code-16k-qlora:latest
-ARG APP_IMAGE=quay.io/ai-lab/${RECIPE}:latest
-ARG SERVER_IMAGE=quay.io/ai-lab/llamacpp_python:latest
-ARG TARGETARCH
 
 # Add quadlet files to setup system to automatically run AI application on boot
 COPY build/${RECIPE}.kube build/${RECIPE}.yaml /usr/share/containers/systemd
 
-# Because images are prepulled, no need for .image quadlet
-# If commenting out the pulls below, uncomment this to track the images
-# so the systemd service will wait for the images with the service startup
-# COPY build/${RECIPE}.image /usr/share/containers/systemd
+# Install .image quadlet files for each workload container
+COPY build/${RECIPE}-app.image build/${RECIPE}-model.image build/${RECIPE}-server.image \
+     /usr/share/containers/systemd
 
-# Install fuse-overlayfs to allow nested podman operations during build
-# and enable it as the mount_program for the overlay storage driver.
-RUN dnf install -y fuse-overlayfs && dnf clean all && \
-    sed -i 's|^#mount_program = "/usr/bin/fuse-overlayfs"|mount_program = "/usr/bin/fuse-overlayfs"|' \
-        /usr/share/containers/storage.conf
+# Configure logically-bound images so bootc pre-fetches the workload
+# containers during installation. Images are stored in /usr/lib/bootc/storage
+# and available immediately at boot without an on-demand pull.
+RUN mkdir -p /usr/lib/bootc/bound-images.d && \
+    ln -s /usr/share/containers/systemd/${RECIPE}-app.image    /usr/lib/bootc/bound-images.d/ && \
+    ln -s /usr/share/containers/systemd/${RECIPE}-model.image  /usr/lib/bootc/bound-images.d/ && \
+    ln -s /usr/share/containers/systemd/${RECIPE}-server.image /usr/lib/bootc/bound-images.d/
 
-# Setup /usr/lib/containers/storage as an additional store for images.
-# Remove once the base images have this set by default.
-RUN sed -i -e '/additionalimagestores = \[/a\  "/usr/lib/containers/storage",' \
-        /usr/share/containers/storage.conf
+# First-boot service to register /usr/lib/bootc/storage as an additional
+# image store in /etc/containers/storage.conf. This cannot be baked into
+# the image because bootc-image-builder's osbuild sandbox validates all
+# additionalimagestores paths and fails if they don't exist.
+COPY build/configure-image-store.sh /usr/libexec/configure-image-store.sh
+RUN chmod 0755 /usr/libexec/configure-image-store.sh
+COPY build/configure-image-store.service /usr/lib/systemd/system/configure-image-store.service
+RUN systemctl enable configure-image-store.service
 
 # Added for running as an OCI Container to prevent Overlay on Overlay issues.
 VOLUME /var/lib/containers
-
-# Prepull the model, model_server & application images to populate the system.
-# Comment the pull commands to keep bootc image smaller.
-# The quadlet .image file added above pulls following images with service startup
-
-RUN podman pull --arch=${TARGETARCH} --root /usr/lib/containers/storage ${SERVER_IMAGE}
-RUN podman pull --arch=${TARGETARCH} --root /usr/lib/containers/storage ${APP_IMAGE}
-RUN podman pull --arch=${TARGETARCH} --root /usr/lib/containers/storage ${MODEL_IMAGE}
-
-RUN podman system reset --force 2>/dev/null

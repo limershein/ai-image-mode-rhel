@@ -1,0 +1,9 @@
+# Size the root filesystem large enough for the OS + pre-loaded workload images
+# (model ~7GB, server ~2GB, app ~1GB, plus OS ~3GB and headroom).
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "30 GiB"
+
+[[customizations.user]]
+name = "root"
+key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCn3S2+T7aB12NGu8uyOoxJ+WdFORByp54RwzVIVOyWqqWvp0oBv0RNYw8Iwav/sP2QW7OowJ6kfpLrrxtqczNxvMmB8lcfpBF5QLwhfKwR+PvHGxXoRMbe1VCuVzGAp/BsMeaCHe+bfrdislfF/XiGYtUi8BQBabEumLhxMzmN9MECsGHOZ3YysHN4RRU5NO1S3k3KCs2yQA2Ghs+ZZuIhDl+s5NdTcLtlS7JUBQ6UnVdX8CeTMV+Fb7v/pZtzdVCQXJYuoZlpO51247AUiWKzsNHD6NBAwds4zxQ5vZHfS0ow3eZ3DDdniYa9P6qKFoP8b50M6C/El9z3aLrc78Di0tEJhKbBBogYFBy4NPmzSM0oFLDVSv9nwsqz7RBrP0mk/hd1LZBrmlgeJInWMIJVKYgF9+4OtfTFcfuiQ5DFi4Jo89Tit9b5L9NQeD/VeZlY16/g1EirsblnorsmpaSA8QnmvFYkHdKIlaSJWQLo97P5Zb0PQ/ELMevVcBrv4h0= limershe@limershe-thinkpadp1gen5.remote.csb"

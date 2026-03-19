@@ -1,0 +1,13 @@
+[Unit]
+Description=Configure bootc bound-image storage for podman
+After=local-fs.target
+Before=codegen.service
+ConditionPathExists=/usr/lib/bootc/storage
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/configure-image-store.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
