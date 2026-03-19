@@ -10,60 +10,92 @@ for one that has GPU drivers and toolkits with additional build-args. The `FROM`
 kernel drivers and toolkits if building for GPU enabled systems. For an example of an NVIDIA/CUDA base image,
 see [NVIDIA bootable image example](https://gitlab.com/bootc-org/examples/-/tree/main/nvidia?ref_type=heads)
 
-In order to pre-pull the workload images, you need to build from the same architecture you're building for.
-If not pre-pulling the workload images, you can cross build (ie, build from a Mac for an X86_64 system).
-To build the derived bootc image for x86_64 architecture, run the following:
-
 The build host must have a RHEL subscription, as the Containerfile pulls from
-`registry.redhat.io` and installs packages via `dnf` during the build. Log in
-to the registry before building:
+`registry.redhat.io`. Log in to the registry before building:
 
 ```bash
 podman login registry.redhat.io
 ```
 
-Then build the image. The `--device /dev/fuse` flag is required because the
-Containerfile installs `fuse-overlayfs` to support nested `podman pull`
-operations during the build (kernel overlayfs cannot stack on the build's
-own overlayfs layer):
+#### How pre-loading works
+
+This image uses RHEL 10's **logically-bound images** feature to pre-load
+workload containers. Individual `.image` quadlet files for each workload are
+symlinked into `/usr/lib/bootc/bound-images.d/`. When the image is installed
+(via `bootc install` or `bootc-image-builder`), bootc automatically pre-fetches
+the bound images into `/usr/lib/bootc/storage`.
+
+A first-boot systemd service (`configure-image-store.service`) registers
+`/usr/lib/bootc/storage` as an additional image store in
+`/etc/containers/storage.conf` so podman can see the pre-fetched images. This
+runtime configuration is necessary because bootc-image-builder's osbuild sandbox
+validates all `additionalimagestores` paths and fails if they are baked into the
+image.
+
+The workload images must also be pre-pulled on the build host before running
+bootc-image-builder so they are available in `/var/lib/containers/storage`
+(which is bind-mounted into the builder).
+
+#### Build the bootc image
 
 ```bash
 cd codegen/bootc
 
-# for CPU powered sample LLM application
-# to switch to an alternate platform like aarch64, pass --platform linux/arm64
-# --cap-add SYS_ADMIN is needed for nested podman pulls during the build.
-# --device /dev/fuse is needed for fuse-overlayfs inside the build container.
-# If the registry you are pulling workload images from requires authentication,
-# volume mount the auth.json file with SELinux separation disabled.
 podman build --build-arg "SSHPUBKEY=$(cat ~/.ssh/id_rsa.pub)" \
-           --security-opt label=disable \
-           --cap-add SYS_ADMIN \
-           --device /dev/fuse \
-           -t quay.io/yourrepo/youros:tag .
-
-# for GPU powered sample LLM application with llamacpp cuda model server
-podman build --build-arg "SSHPUBKEY=$(cat ~/.ssh/id_rsa.pub)" \
-           --build-arg "SERVER_IMAGE=quay.io/ai-lab/llamacpp-python-cuda:latest" \
-           --from <YOUR BOOTABLE IMAGE WITH NVIDIA/CUDA> \
-           --cap-add SYS_ADMIN \
-           --device /dev/fuse \
-           --platform linux/amd64 \
-           -t quay.io/yourrepo/youros:tag .
-
-podman push quay.io/yourrepo/youros:tag
+           -t localhost/codegen-bootc:latest .
 ```
+
+#### Pre-pull workload images on the host
+
+```bash
+podman pull quay.io/ai-lab/codegen:latest
+podman pull quay.io/ai-lab/llamacpp_python:latest
+podman pull quay.io/ai-lab/mistral-7b-code-16k-qlora:latest
+```
+
+#### Convert to a disk image
+
+Use [bootc-image-builder](https://github.com/osbuild/bootc-image-builder)
+(`registry.redhat.io/rhel10/bootc-image-builder`) to convert the bootc image
+to a qcow2, AMI, or other disk format:
+
+```bash
+podman run --rm -it --privileged \
+  --security-opt label=type:unconfined_t \
+  -v ./output:/output \
+  -v ./config.toml:/config.toml:ro \
+  -v /var/lib/containers/storage:/var/lib/containers/storage \
+  registry.redhat.io/rhel10/bootc-image-builder:latest \
+  --type qcow2 \
+  --config /config.toml \
+  --rootfs ext4 \
+  localhost/codegen-bootc:latest
+```
+
+A `config.toml` should include your SSH public key and a root filesystem size
+large enough for the OS plus all pre-loaded workload images (30 GiB recommended):
+
+```toml
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "30 GiB"
+
+[[customizations.user]]
+name = "root"
+key = "ssh-rsa AAAA..."
+```
+
+A convenience script (`build-qcow2.sh`) in the repo root combines all the above
+steps.
 
 ### Update a bootc-enabled system with the new derived image
 
-To build a disk image from an OCI bootable image, you can refer to [bootc-org/examples](https://gitlab.com/bootc-org/examples).
-For this example, we will assume a bootc enabled system is already running.
 If already running a bootc-enabled OS, `bootc switch` can be used to update the system to target a new bootable OCI image with embedded workloads.
 
 SSH into the bootc-enabled system and run:
 
 ```bash
-bootc switch quay.io/yourrepo/youros:tag
+bootc switch quay.io/yourrepo/codegen-bootc:latest
 ```
 
 The necessary image layers will be downloaded from the OCI registry, and the system will prompt you to reboot into the new operating system.
@@ -91,6 +123,12 @@ You can also view the pods and containers that are managed with systemd by runni
 ```
 podman pod list
 podman ps -a
+```
+
+To verify that the pre-loaded images are available (shown as read-only):
+
+```bash
+podman images
 ```
 
 To stop the sample applications, SSH into the bootc system and run:

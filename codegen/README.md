@@ -6,7 +6,7 @@
 
   The AI Application will connect to the Model Service via its OpenAI compatible API. The recipe relies on [LangChain's](https://python.langchain.com/docs/get_started/introduction) python package to simplify communication with the Model Service and uses [Streamlit](https://streamlit.io/) for the UI layer. The application and bootc images are built on UBI 10 and RHEL 10 base images from `registry.redhat.io` (a RHEL subscription is required). You can find an example of the code generation application below.
 
-![](/assets/codegen_ui.png) 
+![](/assets/codegen_ui.png)
 
 
 ## Try the Code Generation Application
@@ -16,7 +16,7 @@ The [Podman Desktop](https://podman-desktop.io) [AI Lab Extension](https://githu
 # Build the Application
 
 The rest of this document will explain how to build and run the application from the terminal, and will
-go into greater detail on how each container in the Pod above is built, run, and 
+go into greater detail on how each container in the Pod above is built, run, and
 what purpose it serves in the overall application. All the recipes use a central [Makefile](../../common/Makefile.common) that includes variables populated with default values to simplify getting started. Please review the [Makefile docs](../../common/README.md), to learn about further customizing your application.
 
 
@@ -42,7 +42,7 @@ make quadlet
 podman kube play build/codegen.yaml
 ```
 
-This will take a few minutes if the model and model-server container images need to be downloaded. 
+This will take a few minutes if the model and model-server container images need to be downloaded.
 The Pod is named `codegen`, so you may use [Podman](https://podman.io) to manage the Pod and its containers:
 
 ```
@@ -50,7 +50,7 @@ podman pod list
 podman ps
 ```
 
-Once the Pod and its containers are running, the application can be accessed at `http://localhost:8501`. 
+Once the Pod and its containers are running, the application can be accessed at `http://localhost:8501`.
 Please refer to the section below for more details about [interacting with the codegen application](#interact-with-the-ai-application).
 
 To stop and remove the Pod, run:
@@ -68,7 +68,7 @@ and quantized into the [GGUF format](https://github.com/ggerganov/ggml/blob/mast
 ways to get a GGUF version of Mistral-7B-code-16k-qlora, but the simplest is to download a pre-converted one from
 [huggingface.co](https://huggingface.co) here: https://huggingface.co/TheBloke/Mistral-7B-Code-16K-qlora-GGUF.
 
-There are a number of options for quantization level, but we recommend `Q4_K_M`. 
+There are a number of options for quantization level, but we recommend `Q4_K_M`.
 
 The recommended model can be downloaded using the code snippet below:
 
@@ -78,7 +78,7 @@ curl -sLO https://huggingface.co/TheBloke/Mistral-7B-Code-16K-qlora-GGUF/resolve
 cd ../recipes/natural_language_processing/codgen
 ```
 
-_A full list of supported open models is forthcoming._  
+_A full list of supported open models is forthcoming._
 
 
 ## Build the Model Service
@@ -124,31 +124,49 @@ Make sure the Model Service is up and running before starting this container ima
 
 ```bash
 # Run this from the current directory (path recipes/natural_language_processing/codegen from repo containers/ai-lab-recipes)
-make run 
+make run
 ```
 
 ## Interact with the AI Application
 
-Everything should now be up an running with the code generation application available at [`http://localhost:8501`](http://localhost:8501). By using this recipe and getting this starting point established, users should now have an easier time customizing and building their own LLM enabled code generation applications.   
+Everything should now be up an running with the code generation application available at [`http://localhost:8501`](http://localhost:8501). By using this recipe and getting this starting point established, users should now have an easier time customizing and building their own LLM enabled code generation applications.
 
 ## Embed the AI Application in a Bootable Container Image
 
 To build a bootable container image that includes this sample code generation workload as a service
-that starts when a system is booted, first prepare the quadlet build artifacts then build the bootc image.
+that starts when a system is booted, build the bootc image from the [bootc](bootc/) directory.
 The base image is `registry.redhat.io/rhel10/rhel-bootc` and the build requires a RHEL subscription on the
 build host. See the [bootc/README.md](bootc/README.md) for full details.
 
-The build requires `--cap-add SYS_ADMIN` and `--device /dev/fuse` for the nested `podman pull` operations
-that pre-pull workload images into the bootc image. The `--device /dev/fuse` flag is needed because the
-Containerfile installs `fuse-overlayfs` to work around overlay-on-overlay limitations during the build:
+The image uses RHEL 10's logically-bound images to pre-fetch workload containers
+during installation. No special build flags (`--cap-add`, `--device`) are needed:
 
 ```bash
 cd bootc
 podman build --build-arg "SSHPUBKEY=$(cat ~/.ssh/id_rsa.pub)" \
-           --security-opt label=disable \
-           --cap-add SYS_ADMIN \
-           --device /dev/fuse \
-           -t quay.io/yourrepo/codegen-bootc:latest .
+           -t localhost/codegen-bootc:latest .
+```
+
+To convert the bootc image to a qcow2 disk image for KVM testing, use
+`bootc-image-builder`. The workload images must be pre-pulled on the host first:
+
+```bash
+# Pre-pull workload images
+podman pull quay.io/ai-lab/codegen:latest
+podman pull quay.io/ai-lab/llamacpp_python:latest
+podman pull quay.io/ai-lab/mistral-7b-code-16k-qlora:latest
+
+# Convert to qcow2
+podman run --rm -it --privileged \
+  --security-opt label=type:unconfined_t \
+  -v ./output:/output \
+  -v ./config.toml:/config.toml:ro \
+  -v /var/lib/containers/storage:/var/lib/containers/storage \
+  registry.redhat.io/rhel10/bootc-image-builder:latest \
+  --type qcow2 \
+  --config /config.toml \
+  --rootfs ext4 \
+  localhost/codegen-bootc:latest
 ```
 
 Once you have a bootc-enabled system running, update it to the image you just built by ssh-ing in and running:
@@ -183,14 +201,5 @@ Bootable images lend toward immutable operating systems, and the more immutable 
 
 You can convert a bootc image to a bootable disk image using the
 [bootc-image-builder](https://github.com/osbuild/bootc-image-builder) container image
-(`registry.redhat.io/rhel10/bootc-image-builder`).
-
-For example, to create an AMI disk image:
-
-```bash
-podman run --rm -it --privileged \
-  -v /var/lib/containers/storage:/var/lib/containers/storage \
-  registry.redhat.io/rhel10/bootc-image-builder \
-  --type ami \
-  quay.io/yourrepo/codegen-bootc:latest
-```
+(`registry.redhat.io/rhel10/bootc-image-builder`). See [bootc/README.md](bootc/README.md)
+for the complete build workflow including `config.toml` and pre-pull steps.
