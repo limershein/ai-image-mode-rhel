@@ -31,5 +31,5 @@ podman run --rm -it --privileged \
   registry.redhat.io/rhel10/bootc-image-builder:latest \
   --type qcow2 \
   --config /config.toml \
-  --rootfs ext4 \
+  --rootfs xfs \
   "${IMAGE_NAME}"
